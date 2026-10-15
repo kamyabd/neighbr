@@ -1,6 +1,6 @@
 /* Neighbr Service Worker: lädt die App einmal und startet sie danach auch offline. */
-const CACHE = 'neighbr-v1';
-const CORE = ['./', 'index.html', 'vendor.js', 'manifest.webmanifest',
+const CACHE = 'neighbr-v2';
+const CORE = ['./', 'index.html', 'config.js', 'vendor.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png', 'icons/favicon.png'];
 
 self.addEventListener('install', e => {
@@ -20,8 +20,8 @@ self.addEventListener('fetch', e => {
       .catch(() => caches.match('index.html')));
     return;
   }
-  // Eigene Dateien und Schriften: Cache zuerst, im Hintergrund aktualisieren.
-  if (url.origin === location.origin || url.host.endsWith('fonts.googleapis.com') || url.host.endsWith('fonts.gstatic.com')) {
+  // Eigene Dateien und die Supabase-Bibliothek: Cache zuerst, im Hintergrund aktualisieren.
+  if (url.origin === location.origin || url.host === 'cdn.jsdelivr.net') {
     e.respondWith(caches.match(req).then(hit => {
       const net = fetch(req).then(res => { if (res.ok || res.type === 'opaque') { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); } return res; }).catch(() => hit);
       return hit || net;

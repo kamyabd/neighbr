@@ -24,8 +24,6 @@
 </style>
 </head>
 <body>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Figtree:wght@400;500;600;700&display=swap">
 <style>
 /* Layout: one phone-width app column, scrolling content area, bottom tab bar in flow */
 :root{
@@ -194,12 +192,20 @@ textarea.input{height:auto;min-height:110px;padding:12px 14px;resize:vertical;li
 
 <div id="root"><div style="padding:40px;text-align:center;font-family:system-ui,sans-serif">Neighbr wird geladen …</div></div>
 
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="vendor.js"></script>
 <script>
 (function(){
 const { useState, useEffect, useReducer, useRef, useMemo } = React;
 const html = htm.bind(React.createElement);
-const KEY = 'neighbr-test-v4';
+/* Live-Betrieb: Wenn config.js eine Supabase-Verbindung angibt, nutzt die App echte Konten und eine gemeinsame Datenbank. */
+const CFG = window.NEIGHBR_CONFIG || null;
+const LIVE = !!(CFG && CFG.supabaseUrl && CFG.supabaseKey);
+const sb = LIVE && window.supabase && window.supabase.createClient
+  ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, storageKey:'neighbr-auth' } })
+  : null;
+const KEY = LIVE ? 'neighbr-live-v1' : 'neighbr-test-v4';
 
 /* ---------- Helpers ---------- */
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -471,8 +477,11 @@ function load(){
       s.v = 4; s.browse = 'service';
     }
     if (s && s.v === 4) return s; } } catch(e){}
-  return seed();
+  return fresh();
 }
+/* Im Live-Betrieb gibt es keine Testfiguren: Alles, was man sieht, kommt aus der gemeinsamen Datenbank. */
+function seedLive(){ return { ...seed(), listings:[], reports:[], hideTasks:true, payoutBase:0 }; }
+function fresh(){ return LIVE ? seedLive() : seed(); }
 function persist(s){
   try { localStorage.setItem(KEY, JSON.stringify(s)); }
   catch(e){ try { const lite = { ...s, listings: s.listings.map(l => ({ ...l, photo:null })), threads: s.threads.map(t=>({ ...t, messages: t.messages.map(m=> m.img ? { ...m, img:null, text:'[Foto]' } : m) })) }; localStorage.setItem(KEY, JSON.stringify(lite)); } catch(e2){} }
@@ -497,7 +506,7 @@ function Avatar({ name, size=48, tone='peach' }){
 function IdPill({ idv, small }){
   const st = small ? { padding:'2px 7px', fontSize:11 } : null;
   return idv ? html`<span className="pill p-mint" style=${st}><${Icon} n="shield" s=${small?12:14} w=${2.2}/>Identität geprüft</span>`
-             : html`<span className="pill p-sunk" style=${st}><${Icon} n="phone" s=${small?12:14}/>Nur Handy bestätigt</span>`;
+             : html`<span className="pill p-sunk" style=${st}><${Icon} n=${LIVE ? 'user' : 'phone'} s=${small?12:14}/>${LIVE ? 'Nicht geprüft' : 'Nur Handy bestätigt'}</span>`;
 }
 function Header({ title, onBack, right }){
   return html`<div className="pad row g12" style=${{ paddingBlock:'14px 10px', background:'var(--bg)' }}>
@@ -517,13 +526,13 @@ function ListingCard({ l, fav, onOpen, onFav }){
     <${Tile} l=${l}/>
     <div className="stack g4 grow">
       <span style=${{ fontWeight:600, lineHeight:1.3 }}>${l.title}</span>
-      <span className="small muted">${l.provider.name} · ${fmtRating(l)} · ${km(l.dist)}</span>
+      <span className="small muted">${l.provider.name} · ${fmtRating(l)} · ${LIVE ? (l.district || 'in der Nähe') : km(l.dist)}</span>
       <div className="row g6 wrap">
         <span className="price">${priceText(l.price)}</span>
         ${l.provider.idv && html`<span className="muted" style=${{ color:'var(--mint-ink)' }} title="Identität geprüft" aria-label="Identität geprüft"><${Icon} n="shield" s=${16}/></span>`}
         ${l.provider.womenOnly && html`<span className="pill p-peach" style=${{ padding:'2px 7px', fontSize:11 }}>Frauen für Frauen</span>`}
         ${l.schedule && html`<span className="pill p-lav" style=${{ padding:'2px 7px', fontSize:11 }}><${Icon} n="clock" s=${12}/>Direkt buchbar</span>`}
-        ${l._sh && !l.mine && html`<span className="pill p-butter" style=${{ padding:'2px 7px', fontSize:11 }}><${Icon} n="users" s=${12}/>Tester:in</span>`}
+        ${l._sh && !l.mine && !LIVE && html`<span className="pill p-butter" style=${{ padding:'2px 7px', fontSize:11 }}><${Icon} n="users" s=${12}/>Tester:in</span>`}
       </div>
     </div>
     ${onFav && html`<${HeartBtn} on=${fav} onClick=${onFav}/>`}
@@ -560,7 +569,7 @@ function copyText(text, toast){
 function Onboarding(props){
   const [legal, setLegal] = useState(null);
   return html`<${React.Fragment}>
-    <${OnboardingSteps} ...${props} openLegal=${setLegal}/>
+    ${LIVE ? html`<${LiveOnboarding} ...${props} openLegal=${setLegal}/>` : html`<${OnboardingSteps} ...${props} openLegal=${setLegal}/>`}
     ${legal && html`<${Sheet} title=${LEGAL[legal].title} onClose=${()=>setLegal(null)}><${LegalBody} id=${legal} openLegal=${setLegal}/><//>`}
   <//>`;
 }
@@ -593,28 +602,7 @@ function OnboardingSteps({ onDone, toast, account, onLogin, openLegal }){
     onDone({ name: name.trim(), phone: '+49 ' + digits.replace(/^0/,''), verified:true, idVerified:false, gender:null, joined:Date.now(),
       trusted:null, address:'', reviewsReceived:[], settings:{ onlyIdvRequests:false, onlyWomenRequests:false, onlyWomenProviders:false } });
   }
-  if (step === 0) return html`<div className="screen pad stack" style=${{ paddingBlock:32 }}><div className="stack" style=${{ gap:24, marginBlock:'auto' }}>
-    <div className="stack g8">
-      <div className="row g10">
-        <div className="tile t-lav" style=${{ width:56, height:56, borderRadius:18 }}><${Icon} n="home" s=${28}/></div>
-        <span className="logo">neighbr</span>
-      </div>
-      <h1 className="title-xl">Hilfe aus der Nachbarschaft. Sicher bezahlt.</h1>
-      <p className="muted">Biete an, was du kannst, oder finde jemanden für Möbelaufbau, Garten, Transport und vieles mehr.</p>
-    </div>
-    <div style=${{ display:'grid', gridTemplateColumns:'repeat(4,minmax(0,1fr))', gap:10 }}>
-      ${['transport','garten','aufbau','tiere'].map((c,i)=> html`<div key=${c} className=${'tile t-' + ['peach','mint','lav','butter'][i]} style=${{ height:72, borderRadius:20 }}><${Icon} n=${c} s=${30} w=${1.7}/></div>`)}
-    </div>
-    <div className="stack g8">
-      <div className="box b-mint"><${Icon} n="shield"/><span>Dein Geld wird hinterlegt und erst ausgezahlt, wenn die Aufgabe erledigt ist.</span></div>
-      <div className="box b-lav"><${Icon} n="id"/><span>Geprüfte Identitäten, Termin-Check-in und ein Notfallknopf. Damit sich alle sicher fühlen.</span></div>
-    </div>
-    <div className="stack g8">
-      <button className="btn" onClick=${()=>start('register')}>Konto erstellen</button>
-      <button className="btn outline" onClick=${()=>start('login')}><${Icon} n="login" s=${20}/>Ich habe schon ein Konto</button>
-    </div>
-    <p className="tiny muted" style=${{ textAlign:'center', lineHeight:1.5 }}>Testversion: Es fließt kein echtes Geld, SMS und Ausweis werden nur simuliert. Bitte gib keine echten Daten ein.</p>
-  </div></div>`;
+  if (step === 0) return html`<${Welcome} onRegister=${()=>start('register')} onLogin=${()=>start('login')} foot="Testversion: Es fließt kein echtes Geld, SMS und Ausweis werden nur simuliert. Bitte gib keine echten Daten ein."/>`;
   if (step === 1) return html`<div className="screen pad stack g20" style=${{ paddingBlock:32 }}>
     <button className="iconbtn" aria-label="Zurück" onClick=${()=>setStep(0)}><${Icon} n="back"/></button>
     ${mode==='login'
@@ -639,6 +627,112 @@ function OnboardingSteps({ onDone, toast, account, onLogin, openLegal }){
     ${err && html`<p className="err" role="alert">${err}</p>`}
     <button className="btn" onClick=${finish}>Konto erstellen</button>
   </div>`;
+}
+function Welcome({ onRegister, onLogin, foot }){
+  return html`<div className="screen pad stack" style=${{ paddingBlock:32 }}><div className="stack" style=${{ gap:24, marginBlock:'auto' }}>
+    <div className="stack g8">
+      <div className="row g10">
+        <div className="tile t-lav" style=${{ width:56, height:56, borderRadius:18 }}><${Icon} n="home" s=${28}/></div>
+        <span className="logo">neighbr</span>
+      </div>
+      <h1 className="title-xl">Hilfe aus der Nachbarschaft. Sicher bezahlt.</h1>
+      <p className="muted">Biete an, was du kannst, oder finde jemanden für Möbelaufbau, Garten, Transport und vieles mehr.</p>
+    </div>
+    <div style=${{ display:'grid', gridTemplateColumns:'repeat(4,minmax(0,1fr))', gap:10 }}>
+      ${['transport','garten','aufbau','tiere'].map((c,i)=> html`<div key=${c} className=${'tile t-' + ['peach','mint','lav','butter'][i]} style=${{ height:72, borderRadius:20 }}><${Icon} n=${c} s=${30} w=${1.7}/></div>`)}
+    </div>
+    <div className="stack g8">
+      <div className="box b-mint"><${Icon} n="shield"/><span>Dein Geld wird hinterlegt und erst ausgezahlt, wenn die Aufgabe erledigt ist.</span></div>
+      <div className="box b-lav"><${Icon} n="id"/><span>Geprüfte Identitäten, Termin-Check-in und ein Notfallknopf. Damit sich alle sicher fühlen.</span></div>
+    </div>
+    <div className="stack g8">
+      <button className="btn" onClick=${onRegister}>Konto erstellen</button>
+      <button className="btn outline" onClick=${onLogin}><${Icon} n="login" s=${20}/>Ich habe schon ein Konto</button>
+    </div>
+    <p className="tiny muted" style=${{ textAlign:'center', lineHeight:1.5 }}>${foot}</p>
+  </div></div>`;
+}
+function LiveOnboarding({ toast, openLegal }){
+  const [step, setStep] = useState('welcome');
+  const [email, setEmail] = useState(''); const [pw, setPw] = useState(''); const [name, setName] = useState(''); const [phone, setPhone] = useState(''); const [agree, setAgree] = useState(false);
+  const [err, setErr] = useState(''); const [busy, setBusy] = useState(false); const [info, setInfo] = useState('');
+  const redirect = location.origin + location.pathname;
+  const mail = email.trim().toLowerCase(); const okMail = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(mail);
+  const digits = phone.replace(/\D/g,'');
+  const go = st => { setStep(st); setErr(''); setInfo(''); };
+  const ch = f => e => { f(e.target.value); setErr(''); };
+  async function run(fn){ if (busy) return; setBusy(true); try { await fn(); } catch(e){ setErr(authError(e)); } setBusy(false); }
+  const register = () => run(async () => {
+    if (name.trim().length < 2) { setErr('Bitte gib deinen Vornamen ein.'); return; }
+    if (!okMail) { setErr('Bitte gib eine gültige E-Mail-Adresse ein.'); return; }
+    if (pw.length < 8) { setErr('Dein Passwort braucht mindestens 8 Zeichen.'); return; }
+    if (digits && digits.length < 9) { setErr('Die Handynummer sieht unvollständig aus. Du kannst das Feld auch leer lassen.'); return; }
+    if (!agree) { setErr('Bitte bestätige, dass du mindestens 18 bist und den Bedingungen zustimmst.'); return; }
+    const { data, error } = await sb.auth.signUp({ email:mail, password:pw, options:{ emailRedirectTo:redirect, data:{ name:name.trim().slice(0,30), phone: digits ? '+49 ' + digits.replace(/^0/,'') : '' } } });
+    if (error) { setErr(authError(error)); return; }
+    if (!data.session) go('sent');
+  });
+  const login = () => run(async () => {
+    if (!okMail) { setErr('Bitte gib deine E-Mail-Adresse ein.'); return; }
+    if (!pw) { setErr('Bitte gib dein Passwort ein.'); return; }
+    const { error } = await sb.auth.signInWithPassword({ email:mail, password:pw });
+    if (error) setErr(authError(error));
+  });
+  const forgot = () => run(async () => {
+    if (!okMail) { setErr('Bitte gib die E-Mail-Adresse deines Kontos ein.'); return; }
+    const { error } = await sb.auth.resetPasswordForEmail(mail, { redirectTo:redirect });
+    if (error) { setErr(authError(error)); return; }
+    setInfo('Falls es ein Konto mit dieser Adresse gibt, ist jetzt eine E-Mail unterwegs. Tipp auf den Link darin, dann kannst du ein neues Passwort festlegen. Schau auch im Spam-Ordner nach.');
+  });
+  const Back = ({ to }) => html`<button className="iconbtn" aria-label="Zurück" onClick=${()=>go(to)}><${Icon} n="back"/></button>`;
+  const Msg = () => html`<${React.Fragment}>${err && html`<p className="err" role="alert">${err}</p>`}${info && html`<div className="box b-mint" role="status"><${Icon} n="check"/><span>${info}</span></div>`}<//>`;
+  if (step==='welcome') return html`<${Welcome} onRegister=${()=>go('register')} onLogin=${()=>go('login')} foot="Testphase unter Freund:innen: Konten und Inserate sind echt, bezahlt wird aber noch nicht wirklich. Es fließt kein Geld über die App."/>`;
+  if (step==='sent') return html`<div className="screen pad stack g20" style=${{ paddingBlock:32 }}>
+    <${Back} to="login"/>
+    <div className="stack g8"><h1 className="title-xl">Fast geschafft</h1><p className="muted">Wir haben dir eine E-Mail an ${mail} geschickt. Tipp auf den Link darin, um dein Konto zu bestätigen. Danach kannst du dich anmelden.</p></div>
+    <div className="box b-lav"><${Icon} n="alert"/><span>Nichts angekommen? Schau im Spam-Ordner nach. Die Mail kann ein paar Minuten brauchen.</span></div>
+    <button className="btn" onClick=${()=>go('login')}>Zur Anmeldung</button>
+  </div>`;
+  if (step==='login' || step==='forgot') return html`<div className="screen pad stack g20" style=${{ paddingBlock:32 }}>
+    <${Back} to=${step==='forgot' ? 'login' : 'welcome'}/>
+    <div className="stack g8"><h1 className="title-xl">${step==='forgot' ? 'Passwort vergessen?' : 'Willkommen zurück'}</h1>
+      <p className="muted">${step==='forgot' ? 'Gib deine E-Mail-Adresse ein. Wir schicken dir einen Link, mit dem du ein neues Passwort festlegst.' : 'Melde dich mit deiner E-Mail-Adresse und deinem Passwort an.'}</p></div>
+    <div className="field"><label htmlFor="em">E-Mail-Adresse</label><input id="em" className="input" type="email" inputMode="email" autoComplete="email" value=${email} onChange=${ch(setEmail)}/></div>
+    ${step==='login' && html`<div className="field"><label htmlFor="pw">Passwort</label><input id="pw" className="input" type="password" autoComplete="current-password" value=${pw} onChange=${ch(setPw)} onKeyDown=${e=>{ if (e.key==='Enter') login(); }}/></div>`}
+    <${Msg}/>
+    ${step==='login' ? html`<div className="stack g8"><button className="btn" disabled=${busy} onClick=${login}>${busy ? 'Einen Moment …' : 'Anmelden'}</button>
+        <button className="btn ghost" onClick=${()=>go('forgot')}>Passwort vergessen?</button>
+        <button className="btn ghost" onClick=${()=>go('register')}>Noch kein Konto? Registrieren</button></div>`
+      : html`<button className="btn" disabled=${busy} onClick=${forgot}>${busy ? 'Einen Moment …' : 'Link schicken'}</button>`}
+  </div>`;
+  return html`<div className="screen pad stack g20" style=${{ paddingBlock:32 }}>
+    <${Back} to="welcome"/>
+    <div className="stack g8"><h1 className="title-xl">Konto erstellen</h1><p className="muted">Andere sehen nur deinen Vornamen. E-Mail und Handynummer bleiben privat.</p></div>
+    <div className="field"><label htmlFor="nm">Vorname</label><input id="nm" className="input" autoComplete="given-name" value=${name} onChange=${ch(setName)}/></div>
+    <div className="field"><label htmlFor="em">E-Mail-Adresse</label><input id="em" className="input" type="email" inputMode="email" autoComplete="email" value=${email} onChange=${ch(setEmail)}/></div>
+    <div className="field"><label htmlFor="pw">Passwort</label><input id="pw" className="input" type="password" autoComplete="new-password" placeholder="mindestens 8 Zeichen" value=${pw} onChange=${ch(setPw)}/></div>
+    <div className="field"><label htmlFor="ph">Handynummer (freiwillig)</label>
+      <div className="row g8"><span className="input" style=${{ width:76, display:'flex', alignItems:'center', justifyContent:'center', flex:'none' }}>+49</span>
+      <input id="ph" className="input" inputMode="tel" autoComplete="tel-national" placeholder="151 2345678" value=${phone} onChange=${ch(setPhone)}/></div>
+      <span className="tiny muted">Nur für Rückfragen vom Neighbr-Team, zum Beispiel zur Identitätsprüfung.</span></div>
+    <label className="check"><input type="checkbox" id="agree" checked=${agree} onChange=${e=>{ setAgree(e.target.checked); setErr(''); }}/><span>Ich bin mindestens 18 Jahre alt, akzeptiere die <${LinkBtn} onClick=${()=>openLegal('agb')}>Nutzungsbedingungen<//> und habe die <${LinkBtn} onClick=${()=>openLegal('datenschutz')}>Datenschutzerklärung<//> gelesen.</span></label>
+    <p className="small muted" style=${{ lineHeight:1.5 }}>Neighbr bringt Nachbar:innen zusammen. Wir tun viel für eure Sicherheit, Treffen und Vereinbarungen laufen aber direkt zwischen euch und auf eigene Verantwortung. <${LinkBtn} onClick=${()=>openLegal('sicherheit')}>Mehr zu Sicherheit & Haftung<//></p>
+    <${Msg}/>
+    <button className="btn" disabled=${busy} onClick=${register}>${busy ? 'Einen Moment …' : 'Konto erstellen'}</button>
+    <button className="btn ghost" onClick=${()=>go('login')}>Ich habe schon ein Konto</button>
+  </div>`;
+}
+function authError(e){
+  const m = String((e && e.message) || e || '').toLowerCase(); const st = e && e.status;
+  if (m.includes('already registered') || m.includes('already been registered') || m.includes('already exists')) return 'Zu dieser E-Mail-Adresse gibt es schon ein Konto. Melde dich an.';
+  if (m.includes('invalid login') || m.includes('invalid credentials')) return 'E-Mail-Adresse oder Passwort stimmt nicht.';
+  if (m.includes('not confirmed')) return 'Bitte bestätige zuerst deine E-Mail-Adresse. Der Link steckt in deinem Postfach, schau auch im Spam-Ordner nach.';
+  if (st===429 || m.includes('rate limit') || m.includes('too many') || m.includes('security purposes')) return 'Gerade gab es zu viele Versuche. Warte ein paar Minuten und probier es dann noch mal.';
+  if (m.includes('password') && (m.includes('at least') || m.includes('weak') || m.includes('short') || m.includes('characters'))) return 'Das Passwort ist zu schwach. Nimm mindestens 8 Zeichen, gern mit Zahlen.';
+  if (m.includes('invalid') && m.includes('email')) return 'Diese E-Mail-Adresse wird nicht angenommen. Prüf sie bitte noch einmal.';
+  if (m.includes('signups not allowed') || m.includes('signup is disabled')) return 'Neue Konten sind gerade gesperrt. Frag die Person, die dir den Link geschickt hat.';
+  if (m.includes('fetch') || m.includes('network') || m.includes('load failed')) return 'Keine Verbindung. Prüf dein Internet und versuch es noch mal.';
+  return 'Das hat nicht geklappt. ' + ((e && e.message) || '');
 }
 
 /* ---------- Screens ---------- */
@@ -693,7 +787,7 @@ function Home({ s, act, go, openSheet }){
           <${Icon} n="bell"/>${unread>0 && html`<span className="badge-dot">${unread}</span>`}
         </button>
       </div>
-      ${!s.hideTasks && html`<${TestTasks} s=${s} act=${act} openSheet=${openSheet}/>`}
+      ${!s.hideTasks && !LIVE && html`<${TestTasks} s=${s} act=${act} openSheet=${openSheet}/>`}
       ${s.net && s.net.status==='shared' && !s.hideSharedNote && html`<div className="box b-mint" style=${{ alignItems:'center' }}><${Icon} n="users"/>
         <span className="grow">Gemeinsame Testwelt: Andere Tester:innen sehen deine Inserate. Bitte keine echten Adressen oder Telefonnummern eingeben.</span>
         <button className="iconbtn" style=${{ width:36, height:36, background:'transparent', color:'inherit' }} aria-label="Hinweis ausblenden" onClick=${()=>act(st=>({ ...st, hideSharedNote:true }))}><${Icon} n="x" s=${16}/></button></div>`}
@@ -719,7 +813,7 @@ function Home({ s, act, go, openSheet }){
         <label className="chip grow" style=${{ height:40, justifyContent:'space-between', paddingRight:8 }}>
           <span className="small muted">Sortieren</span>
           <select id="sort" aria-label="Sortieren" value=${F.sort} onChange=${e=>{ const v = e.target.value; act(st=>({ ...st, filters:{ ...(st.filters||DEF_F), sort:v } })); }} style=${{ border:'none', background:'transparent', fontWeight:600, fontSize:14, color:'var(--ink)', outline:'none', minWidth:0 }}>
-            <option value="nah">Entfernung</option><option value="preis">Preis</option><option value="bewertung">Bewertung</option>
+            <option value="nah">${LIVE ? 'Neueste' : 'Entfernung'}</option><option value="preis">Preis</option><option value="bewertung">Bewertung</option>
           </select>
         </label>
       </div>
@@ -728,9 +822,11 @@ function Home({ s, act, go, openSheet }){
         <button className="chip" style=${{ height:34, fontSize:13, background:'transparent', borderColor:'transparent', color:'var(--accent)', fontWeight:600 }} onClick=${clearAll}>Alle löschen</button>
       </div>`}
       ${womenView && html`<div className="box b-lav" style=${{ alignItems:'center' }}><${Icon} n="venus"/><span className="grow">Du siehst nur Angebote von Frauen.</span><button className="btn ghost sm" onClick=${()=>go({ name:'safety' })}>Ändern</button></div>`}
-      <div className="row" style=${{ justifyContent:'space-between' }}><h2 className="title-m">${rentMode ? 'Zum Mieten in deiner Nähe' : 'In deiner Nähe'}</h2><span className="small muted">${list.length} ${list.length===1 ? 'Angebot' : 'Angebote'}</span></div>
+      <div className="row" style=${{ justifyContent:'space-between' }}><h2 className="title-m">${LIVE ? (rentMode ? 'Zum Mieten' : 'Angebote') : rentMode ? 'Zum Mieten in deiner Nähe' : 'In deiner Nähe'}</h2><span className="small muted">${list.length} ${list.length===1 ? 'Angebot' : 'Angebote'}</span></div>
       <div className="stack g12">
-        ${list.length === 0 && html`<div className="empty"><div className="tile t-lav" style=${{ width:64, height:64, borderRadius:20 }}><${Icon} n="search" s=${28}/></div><p style=${{ fontWeight:600 }}>Nichts gefunden</p><p className="small muted">Vergrößere den Umkreis, nimm einen Filter raus oder probier einen anderen Suchbegriff.</p></div>`}
+        ${list.length === 0 && html`<div className="empty"><div className="tile t-lav" style=${{ width:64, height:64, borderRadius:20 }}><${Icon} n="search" s=${28}/></div>${LIVE && !q && c==='alle' && !active.length && !s.listings.some(l=>(rentMode ? isRental(l) : !isRental(l)) && l.status==='live')
+          ? html`<${React.Fragment}><p style=${{ fontWeight:600 }}>${rentMode ? 'Noch nichts zum Mieten' : 'Noch keine Angebote'}</p><p className="small muted">Sei die erste Person: Tippe unten auf das Plus und biete etwas an. Alle, die du einlädst, sehen es sofort.</p><//>`
+          : html`<${React.Fragment}><p style=${{ fontWeight:600 }}>Nichts gefunden</p><p className="small muted">${LIVE ? 'Nimm einen Filter raus oder probier einen anderen Suchbegriff.' : 'Vergrößere den Umkreis, nimm einen Filter raus oder probier einen anderen Suchbegriff.'}</p><//>`}</div>`}
         ${list.map((l,i)=> html`<${React.Fragment} key=${l.id}>
           <${ListingCard} l=${l} fav=${s.favorites.includes(l.id)} onOpen=${()=>go({ name:'listing', id:l.id })} onFav=${()=>toggleFav(l.id)}/>
           ${i===2 && html`<${AdSlot}/>`}
@@ -823,7 +919,7 @@ function ListingScreen({ s, act, go, back, openSheet, id, startChat, bookSlot, b
           <h1 className="title-l">${l.title}</h1>
           <span className="price" style=${{ fontSize:22 }}>${priceText(l.price)}</span>
           ${isRental(l) && html`<span className="small" style=${{ color:'var(--ink-2)' }}>${l.deposit ? '+ ' + money(l.deposit) + ' Kaution, kommt nach der Rückgabe zurück' : 'Keine Kaution'}</span>`}
-          <span className="small muted row g4"><${Icon} n="pin" s=${15}/>${l.district || 'In deiner Nähe'} · ca. ${km(l.dist)} · ${isRental(l) ? HANDOVER[(l.rent && l.rent.handover) || 'abholung'] + ', Adresse nach der Buchung' : 'genaue Adresse erst nach der Buchung'}</span>
+          <span className="small muted row g4"><${Icon} n="pin" s=${15}/>${l.district || 'In deiner Nähe'}${LIVE ? '' : ' · ca. ' + km(l.dist)} · ${isRental(l) ? HANDOVER[(l.rent && l.rent.handover) || 'abholung'] + ', Adresse nach der Buchung' : 'genaue Adresse erst nach der Buchung'}</span>
         </div>
         <div className="panel stack g10" style=${{ padding:12 }}>
           <div className="row g12">
@@ -1321,16 +1417,20 @@ function LinkBtn({ onClick, children }){
 
 function NetBox({ s }){
   const n = s.net || {};
+  if (n.status==='live') return html`<div className="box b-mint" style=${{ alignItems:'flex-start' }}><${Icon} n="users"/><span><b>Testphase mit echten Konten.</b> Deine Inserate, Chats und Buchungen sehen die anderen wirklich. Bezahlt wird noch nicht echt: Das Bezahlen in der App ist nur simuliert, es fließt kein Geld.</span></div>`;
   if (n.status==='shared') return html`<div className="box b-mint" style=${{ alignItems:'flex-start' }}><${Icon} n="users"/><span><b>Gemeinsame Testwelt.</b> Inserate, Chats und Buchungen teilst du mit den anderen Tester:innen. Bitte gib keine echten Adressen oder Telefonnummern ein, eine ausgedachte Adresse reicht.</span></div>`;
   if (n.status==='readonly') return html`<div className="box b-butter" style=${{ alignItems:'flex-start' }}><${Icon} n="lock"/><span><b>Nur auf diesem Gerät.</b> Für die gemeinsame Testwelt fehlt dir die Berechtigung zum Mitschreiben. Alles, was du machst, bleibt in deinem Browser. Die anderen Personen sind Testfiguren.</span></div>`;
   if (n.status==='local') return html`<div className="box b-butter" style=${{ alignItems:'flex-start' }}><${Icon} n="lock"/><span><b>Nur auf diesem Gerät.</b> Alles, was du machst, bleibt in deinem Browser. Die anderen Personen sind Testfiguren.</span></div>`;
   return null;
 }
 
-function Profile({ s, go, openSheet, screenName }){
+function Profile({ s, go, openSheet, screenName, live }){
   const mine = s.listings.filter(l=>l.mine); const orders = s.orders; const lvl = trustLevel(s);
-  const showAdmin = !(s.net && s.net.shared) || s.net.owner;
-  const queue = s.listings.filter(l=>l.status==='review').length + s.reports.filter(r=>r.status==='open').length + (s.allOrders || s.orders).filter(o=>o.status==='disputed').length + s.alerts.filter(a=>a.status==='open').length + (s.feedback || []).filter(f=>f.status!=='done').length;
+  const showAdmin = LIVE ? !!(s.net && s.net.owner) : (!(s.net && s.net.shared) || s.net.owner);
+  const [canClaim, setCanClaim] = useState(false);
+  useEffect(()=>{ if (!LIVE || !sb || !s.net || !s.net.live || s.net.owner) return; let on = true;
+    sb.rpc('admin_exists').then(r=>{ if (on && r && r.data===false) setCanClaim(true); }, ()=>{}); return ()=>{ on = false; }; }, [s.net && s.net.live, s.net && s.net.owner]);
+  const queue = idQueue(s).length + s.listings.filter(l=>l.status==='review').length + s.reports.filter(r=>r.status==='open').length + (s.allOrders || s.orders).filter(o=>o.status==='disputed').length + s.alerts.filter(a=>a.status==='open').length + (s.feedback || []).filter(f=>f.status!=='done').length;
   const Row = ({ icon, label, sub, onClick, tone='lav', badge }) => html`<button className="listrow" onClick=${onClick}>
     <div className=${'tile t-' + tone} style=${{ width:42, height:42, borderRadius:14 }}><${Icon} n=${icon} s=${20}/></div>
     <div className="stack grow" style=${{ gap:1 }}><span style=${{ fontWeight:600 }}>${label}</span>${sub && html`<span className="small muted">${sub}</span>`}</div>
@@ -1354,18 +1454,23 @@ function Profile({ s, go, openSheet, screenName }){
     </div>
     <${NetBox} s=${s}/>
     <div className="panel"><${Row} icon="feedback" label="Feedback geben" sub="Was gefällt dir, was fehlt, was klemmt?" tone="peach" onClick=${()=>openSheet('feedback', { screen:screenName })}/></div>
+    ${canClaim && html`<div className="panel stack g10" style=${{ padding:14 }}>
+      <span style=${{ fontWeight:600 }}>Betreiber-Ansicht einrichten</span>
+      <span className="small muted">Noch niemand verwaltet Neighbr. Tipp nur hierauf, wenn du die App betreibst. Danach siehst du Meldungen, Feedback und Anfragen zur Identitätsprüfung. Das geht genau ein Mal.</span>
+      <button className="btn outline sm" style=${{ width:'100%' }} onClick=${()=>live.claimAdmin()}>Ich betreibe Neighbr</button>
+    </div>`}
     ${showAdmin && html`<div className="stack g8"><span className="eyebrow">${s.net && s.net.shared ? 'Betreiber-Ansicht (nur für dich sichtbar)' : 'Betreiber-Ansicht (nur in der Testversion sichtbar)'}</span>
       <div className="panel"><${Row} icon="shield" label="Moderation" sub=${s.feedback ? 'Feedback, Inserate, Meldungen, Streitfälle, Notfälle' : 'Inserate, Meldungen, Streitfälle, Notfälle'} tone="mint" badge=${queue} onClick=${()=>go({ name:'admin' })}/></div>
     </div>`}
     <div className="panel">
-      <${Row} icon="logout" label="Abmelden" sub=${'Angemeldet mit ' + s.user.phone} tone="lav" onClick=${()=>openSheet('logout')}/>
-      <${Row} icon="refresh" label="Testdaten zurücksetzen" sub="Startet die Testversion neu" tone="butter" onClick=${()=>openSheet('reset')}/>
+      <${Row} icon="logout" label="Abmelden" sub=${'Angemeldet mit ' + (s.user.email || s.user.phone)} tone="lav" onClick=${()=>openSheet('logout')}/>
+      ${!LIVE && html`<${Row} icon="refresh" label="Testdaten zurücksetzen" sub="Startet die Testversion neu" tone="butter" onClick=${()=>openSheet('reset')}/>`}
       <${Row} icon="trash" label="Konto löschen" sub="Pflicht für den App Store" tone="peach" onClick=${()=>openSheet('delete')}/>
     </div>
     <div className="stack g8"><span className="eyebrow">Rechtliches</span>
       <div className="panel">${LEGAL_ORDER.map(([k, t, ic]) => html`<${Row} key=${k} icon=${ic} label=${t} tone="lav" onClick=${()=>openSheet('legal', { id:k })}/>`)}</div>
     </div>
-    <p className="tiny muted" style=${{ textAlign:'center' }}>Neighbr Testversion 0.4</p>
+    <p className="tiny muted" style=${{ textAlign:'center' }}>${LIVE ? 'Neighbr 0.5 · Testphase' : 'Neighbr Testversion 0.4'}</p>
   </div></div>`;
 }
 
@@ -1383,7 +1488,7 @@ function SafetyScreen({ s, act, back, openSheet, toast }){
       <div className=${'stack g10 ' + (u.idVerified ? 't-mint' : 't-sunk')} style=${{ borderRadius:24, padding:18 }}>
         <div className="row g12"><div className="tile" style=${{ width:48, height:48, borderRadius:16, background:'var(--surface)' }}><${Icon} n="id" s=${26}/></div>
           <div className="stack grow" style=${{ gap:2 }}><span className="title-m">${u.idVerified ? 'Identität geprüft' : 'Identität nicht geprüft'}</span><span className="small">Vertrauensstufe: ${lvl.label} · bis zu ${lvl.limit} neue Anfragen am Tag</span></div></div>
-        ${!u.idVerified && html`<button className="btn sm" style=${{ width:'100%' }} onClick=${()=>openSheet('idcheck')}>Identität jetzt prüfen</button>`}
+        ${!u.idVerified && html`<button className="btn sm" style=${{ width:'100%' }} onClick=${()=>openSheet('idcheck')}>${LIVE && u.idReq ? 'Prüfung angefragt' : 'Identität jetzt prüfen'}</button>`}
         ${u.idVerified && html`<span className="small">Andere sehen das grüne Schild bei deinem Namen. Deine Ausweisdaten selbst sieht niemand.</span>`}
       </div>
 
@@ -1420,7 +1525,7 @@ function SafetyScreen({ s, act, back, openSheet, toast }){
           ${[['wallet','Bezahl immer über die App. Nur dann bist du abgesichert.'],['share','Teile Termine mit deiner Vertrauensperson.'],['login','Macht beim Treffen beide den Check-in.'],['users','Du darfst jederzeit jemanden dazuholen. Gib es beim Bezahlen an.'],['ban','Fühlt sich etwas falsch an, brich ab. Du bekommst dein Geld zurück, wenn der Termin nicht stattfindet.'],['sos','In Gefahr? Ruf die 110 an. Der Notfallknopf im Termin zeigt dir die Nummer.']].map(([ic,t])=> html`<div key=${t} className="row g10" style=${{ alignItems:'flex-start' }}><span style=${{ color:'var(--accent)', flex:'none' }}><${Icon} n=${ic} s=${20}/></span><span className="small">${t}</span></div>`)}
         </div>
       </div>
-      <div className="box b-butter"><${Icon} n="alert"/><span>Hinweis für den Testbetrieb: Die Frauen-Optionen müssen vor dem Release rechtlich geprüft werden (Gleichbehandlungsgesetz). Der Identitätscheck mit Selfie verarbeitet biometrische Daten und braucht eine ausdrückliche Einwilligung.</span></div>
+      <div className="box b-butter"><${Icon} n="alert"/><span>${LIVE ? 'Hinweis für die Testphase: Die Frauen-Optionen müssen vor einem öffentlichen Start rechtlich geprüft werden (Gleichbehandlungsgesetz).' : 'Hinweis für den Testbetrieb: Die Frauen-Optionen müssen vor dem Release rechtlich geprüft werden (Gleichbehandlungsgesetz). Der Identitätscheck mit Selfie verarbeitet biometrische Daten und braucht eine ausdrückliche Einwilligung.'}</span></div>
     </div></div>`;
 }
 
@@ -1490,7 +1595,8 @@ function Orders({ s, back, go }){
     </div></div>`;
 }
 
-function Admin({ s, act, back, toast, notify, feedbackDone }){
+function idQueue(s){ return LIVE ? Object.entries(s.profiles || {}).filter(([id, p]) => p && p.idReq && !p.idv).map(([id, p]) => ({ ...p, id })).sort((a,b)=>(a.idReq.at||0)-(b.idReq.at||0)) : []; }
+function Admin({ s, act, back, toast, notify, feedbackDone, live }){
   const pending = s.listings.filter(l=>l.status==='review');
   const reports = s.reports.filter(r=>r.status==='open');
   const disputes = (s.allOrders || s.orders).filter(o=>o.status==='disputed');
@@ -1510,6 +1616,15 @@ function Admin({ s, act, back, toast, notify, feedbackDone }){
   return html`<div className="screen"><${Header} title="Moderation" onBack=${back}/>
     <div className="pad stack g20" style=${{ paddingBlock:'4px 24px' }}>
       <div className="box b-lav"><${Icon} n="shield"/><span>Diese Ansicht sehen später nur du und dein Team. Notfälle zuerst, dann Streitfälle, dann der Rest. Zielzeit für Meldungen: 24 Stunden.</span></div>
+      ${LIVE && html`<${Section} title="Identitätsprüfungen" n=${idQueue(s).length} tone="p-lav">
+        ${idQueue(s).map(p=>{ const c = vals(s.idreqs).filter(r=>r.byId===p.id).sort((a,b)=>(b.at||0)-(a.at||0))[0]; const G = { w:'weiblich', m:'männlich', d:'divers' };
+          return html`<div key=${p.id} className="panel stack g8" style=${{ padding:14 }}>
+          <div className="row g10"><${Avatar} name=${p.name || '?'} size=${40}/><div className="stack grow" style=${{ gap:2 }}><span style=${{ fontWeight:600 }}>${p.name || 'Jemand'}</span><span className="small muted">Laut eigener Angabe ${G[p.idReq.gender] || '–'} · angefragt ${when(p.idReq.at)}</span></div></div>
+          ${c && (c.email || c.phone) && html`<span className="small" style=${{ overflowWrap:'anywhere' }}>Kontakt: ${[c.email, c.phone].filter(Boolean).join(' · ')}</span>`}
+          <p className="tiny muted">Triff die Person oder ruf sie per Video an. Prüf, ob Gesicht, Vorname und Geschlecht im Ausweis passen. Mach kein Foto und keine Kopie vom Ausweis.</p>
+          <div className="row g8"><button className="btn sm grow" onClick=${()=>{ live.adminIdv(p.id, true); toast(p.name + ' ist jetzt geprüft.', 'ok'); }}>Ausweis passt</button><button className="btn outline sm grow" onClick=${()=>{ live.adminIdv(p.id, false); toast('Anfrage abgelehnt.', 'ok'); }}>Ablehnen</button></div>
+        </div>`; })}
+      <//>`}
       ${s.feedback && html`<${Section} title="Feedback von Tester:innen" n=${fbOpen.length} tone="p-lav">
         ${fbOpen.map(f=> html`<div key=${f.id} className="panel stack g8" style=${{ padding:14 }}>
           <div className="row g6 wrap"><span className=${'pill ' + (FB[f.kind] || FB.idee)[1]}>${(FB[f.kind] || FB.idee)[0]}</span><span className="small" style=${{ fontWeight:600 }}>${f.name || 'Jemand'}</span><span className="tiny muted">${f.screen ? 'bei ' + f.screen + ' · ' : ''}${f.at ? when(f.at) : ''}</span></div>
@@ -1580,7 +1695,7 @@ const LEGAL = {
     { h:'4. Was du anbieten darfst', p:['Erlaubt sind alltägliche Leistungen und Gegenstände, die man legal privat anbieten darf. Verboten sind insbesondere:'],
       list:['sexuelle Dienstleistungen', 'Drogen und andere illegale Waren, Waffen und gefälschte Dokumente', 'Leistungen, für die eine Erlaubnis, Zulassung oder ein Meistertitel nötig ist, den du nicht hast, zum Beispiel Arbeiten an Strom-, Gas- oder Wasseranlagen', 'Schwarzarbeit sowie Zahlungen außerhalb der App'],
       after:['Du bist selbst dafür verantwortlich, deine Einnahmen zu versteuern, ein Gewerbe anzumelden, wenn das nötig ist, und dich angemessen zu versichern.'] },
-    { h:'5. Prüfung und Moderation', p:['Jedes Inserat wird vor der Veröffentlichung automatisch geprüft, unklare Fälle prüft ein Mensch. Wir dürfen Inserate, Nachrichten und Bewertungen ablehnen oder entfernen und Konten sperren, wenn sie gegen Gesetze oder diese Bedingungen verstoßen.', 'Wenn wir etwas entfernen oder sperren, sagen wir dir, was wir entschieden haben und warum. Du kannst innerhalb von sechs Monaten widersprechen, dann prüft ein Mensch die Entscheidung erneut.', 'So sortieren wir: Standardmäßig nach Entfernung, deine eigenen Inserate stehen oben. Du kannst stattdessen nach Preis oder Bewertung sortieren. Niemand kann sich eine bessere Platzierung kaufen. Werbung ist immer als „Anzeige“ gekennzeichnet.'] },
+    { h:'5. Prüfung und Moderation', p:['Jedes Inserat wird vor der Veröffentlichung automatisch geprüft, unklare Fälle prüft ein Mensch. Wir dürfen Inserate, Nachrichten und Bewertungen ablehnen oder entfernen und Konten sperren, wenn sie gegen Gesetze oder diese Bedingungen verstoßen.', 'Wenn wir etwas entfernen oder sperren, sagen wir dir, was wir entschieden haben und warum. Du kannst innerhalb von sechs Monaten widersprechen, dann prüft ein Mensch die Entscheidung erneut.', (LIVE ? 'So sortieren wir: Standardmäßig die neuesten Inserate zuerst.' : 'So sortieren wir: Standardmäßig nach Entfernung, deine eigenen Inserate stehen oben.') + ' Du kannst stattdessen nach Preis oder Bewertung sortieren. Niemand kann sich eine bessere Platzierung kaufen. Werbung ist immer als „Anzeige“ gekennzeichnet.'] },
     { h:'6. Vermieten von Gegenständen', p:['Wer vermietet, sorgt dafür, dass der Gegenstand sicher und funktionsfähig ist, und erklärt die Bedienung.', 'Wer mietet, behandelt den Gegenstand sorgfältig, nutzt ihn nur bestimmungsgemäß und gibt ihn pünktlich, sauber und vollständig zurück. Für Schäden, die über normale Abnutzung hinausgehen, haftet die mietende Person nach den gesetzlichen Regeln. Macht bei Übergabe und Rückgabe am besten Fotos vom Zustand.'] },
     { h:'7. Bezahlung und Treuhand', p:['Bezahlt wird nur in der App über unseren Zahlungsdienstleister [Stripe Payments Europe, Ltd.]. Das Geld wird dort hinterlegt und erst ausgezahlt, wenn die Leistung bestätigt oder der Gegenstand ordnungsgemäß zurückgegeben wurde.', 'Bestätigt niemand und meldet niemand ein Problem, geben wir das Geld 72 Stunden nach dem Termin automatisch frei, bei Vermietungen die Kaution 48 Stunden nach der Rückgabe. Bis 24 Stunden vor dem Termin kannst du kostenlos stornieren.', 'Gibt es Streit, kann unser Team vermitteln und über die Auszahlung des hinterlegten Geldes entscheiden. Deine gesetzlichen Ansprüche gegenüber der anderen Person bleiben davon unberührt.', '[Servicegebühr: Höhe und Berechnung eintragen, falls eingeführt.]', 'Nach dem Plattformen-Steuertransparenzgesetz müssen wir in bestimmten Fällen Einnahmen von Anbieter:innen an das Bundeszentralamt für Steuern melden. Dafür können wir dich nach weiteren Angaben fragen, zum Beispiel nach deiner Steuer-Identifikationsnummer.'] },
     { h:'8. Bewertungen', p:['Bewerten darf nur, wer über Neighbr gebucht oder gemietet hat. Bewertungen müssen ehrlich und sachlich sein. Wir löschen Bewertungen, die beleidigen, nachweislich falsch sind oder gegen Gesetze verstoßen.'] },
@@ -1619,6 +1734,24 @@ const LEGAL = {
     { h:'Im Notfall', p:['Polizei: 110 · Feuerwehr und Rettungsdienst: 112. Ruf zuerst dort an, dann hilft dir der Notfallknopf in der App, unser Team und deine Vertrauensperson zu informieren.'] }
   ]}
 };
+if (LIVE) {
+  const sec = (doc, h) => LEGAL[doc].sections.find(x => x.h===h);
+  sec('datenschutz', 'Welche Daten wir verarbeiten und warum').list = [
+    'Konto: E-Mail-Adresse, Passwort (nur verschlüsselt gespeichert), Vorname und, wenn du willst, deine Handynummer. Wir brauchen das, um dein Konto zu führen (Art. 6 Abs. 1 lit. b DSGVO). E-Mail-Adresse und Handynummer sieht niemand außer dir und dem Neighbr-Team.',
+    'Identitätsprüfung (freiwillig): Jemand aus dem Neighbr-Team sieht sich deinen Ausweis einmal persönlich oder im Videoanruf an. Wir machen kein Foto und keine Kopie. Gespeichert wird nur, dass du geprüft bist, und das Geschlecht aus dem Ausweis. Grundlage ist deine Einwilligung (Art. 6 Abs. 1 lit. a DSGVO), die du jederzeit widerrufen kannst.',
+    'Inserate, Fotos und Bewertungen: Diese Inhalte sind für andere Nutzer:innen sichtbar (Art. 6 Abs. 1 lit. b DSGVO).',
+    'Chats: Wir speichern Nachrichten, damit ihr euch absprechen könnt. Sehen können sie nur die beiden Beteiligten. Sie werden automatisch auf Belästigung geprüft (Art. 6 Abs. 1 lit. f DSGVO).',
+    'Buchungen: In der Testphase wird nicht echt bezahlt. Wir speichern Termine, Beträge und den Status, damit ihr euch abstimmen könnt (Art. 6 Abs. 1 lit. b DSGVO).',
+    'Adressen: Deine Adresse sieht nur die Person, mit der du gebucht hast.',
+    'Vertrauensperson und Einstellungen: Bleiben nur auf deinem Gerät.',
+    'Sicherheit: Meldungen von Inhalten und Notfallmeldungen nutzen wir, um euch zu schützen und unsere Pflichten nach dem Digital Services Act zu erfüllen (Art. 6 Abs. 1 lit. c, d und f DSGVO).',
+    'Speicher auf deinem Gerät: Dort speichern wir deine Anmeldung und deine Einstellungen. Das ist technisch nötig (§ 25 Abs. 2 TDDDG).'
+  ];
+  sec('datenschutz', 'Wer deine Daten noch bekommt').p = ['Datenbank und Anmeldung: Supabase Inc. mit Servern in Frankfurt am Main, als Auftragsverarbeiter nach Art. 28 DSGVO. Die App-Dateien liefert GitHub Pages (GitHub Inc., USA) aus, eine Programmbibliothek kommt von jsDelivr. Dabei wird deine IP-Adresse verarbeitet. Übermittlungen in die USA stützen sich auf das EU-US Data Privacy Framework oder Standardvertragsklauseln. Wir verkaufen keine Daten, und in der Testphase gibt es keine Werbung.'];
+  sec('sicherheit', 'Was wir für dich tun').list = ['Jedes Konto braucht eine E-Mail-Adresse und ein Passwort.', 'Freiwillige Identitätsprüfung durch unser Team, sichtbar am grünen Schild.', 'Jedes Inserat wird vor der Veröffentlichung automatisch geprüft.', 'Belästigende Nachrichten werden ausgeblendet, Fotos gehen erst nach einer Buchung.', 'Check-in, Termin teilen und Notfallknopf bei jedem Treffen.', 'Melden und Blockieren mit einem Tipp. Wir prüfen Meldungen so schnell wie möglich.'];
+  sec('agb', '7. Bezahlung und Treuhand').p.unshift('Testphase: Zurzeit wird über Neighbr nicht echt bezahlt. Bezahlen, Treuhand und Auszahlung sind nur simuliert. Was ihr vereinbart, bezahlt ihr direkt untereinander und auf eigene Verantwortung. Die folgenden Regeln gelten, sobald die echte Bezahlung startet.');
+  sec('agb', '9. Sicherheit').p[0] = 'Wir tun viel für eure Sicherheit: freiwillige Identitätsprüfung, Vorabprüfung von Inseraten, Melden und Blockieren, Check-in beim Termin und einen Notfallknopf. Trotzdem können wir nicht garantieren, dass alle Angaben stimmen oder dass jedes Treffen gut verläuft.';
+}
 const LEGAL_ORDER = [['sicherheit','Sicherheit & Haftung','shield'],['agb','Nutzungsbedingungen (AGB)','list'],['datenschutz','Datenschutzerklärung','lock'],['impressum','Impressum','home']];
 function LegalBody({ id, openLegal }){
   const doc = LEGAL[id] || LEGAL.agb;
@@ -1647,6 +1780,8 @@ function SheetHost({ sheet, close, s, act, go, toast, notify, actions }){
   <//>`;
   if (kind==='filters') return html`<${FilterSheet} close=${close} s=${s} act=${act} data=${data} actions=${actions}/>`;
   if (kind==='feedback') return html`<${FeedbackSheet} close=${close} s=${s} actions=${actions} toast=${toast} data=${data}/>`;
+  if (kind==='idcheck' && LIVE) return html`<${LiveIdCheckSheet} close=${close} s=${s} actions=${actions} toast=${toast}/>`;
+  if (kind==='newpw') return html`<${NewPwSheet} close=${close} toast=${toast}/>`;
   if (kind==='idcheck') return html`<${IdCheckSheet} close=${close} act=${act} toast=${toast} after=${data.after} actions=${actions} data=${data}/>`;
   if (kind==='report') return html`<${ReportSheet} close=${close} s=${s} act=${act} toast=${toast} listingId=${data.listingId}/>`;
   if (kind==='pay') return html`<${PaySheet} close=${close} s=${s} actions=${actions} data=${data}/>`;
@@ -1669,7 +1804,7 @@ function SheetHost({ sheet, close, s, act, go, toast, notify, actions }){
     <p style=${{ color:'var(--ink-2)' }}>Dein Termin dauert länger als geplant. Wir fragen nach, um sicherzugehen.</p>
     <button className="btn" onClick=${()=>{ act(st=>({ ...st, orders: st.orders.map(o=>o.id===data.orderId?{ ...o, extended:(o.extended||0)+30 }:o) })); toast('Alles klar. Wir fragen in 30 Minuten noch einmal.', 'ok'); close(); }}>Alles gut, dauert nur länger</button>
     <button className="btn sos" onClick=${()=>actions.reopen('sos', data)}><${Icon} n="sos" s=${20}/>Ich brauche Hilfe</button>
-    <button className="testbtn" onClick=${()=>{ actions.noAnswer(data.orderId); close(); }}><${Icon} n="fast" s=${18}/>Testmodus: Keine Antwort nach 10 Minuten</button>
+    ${!LIVE && html`<button className="testbtn" onClick=${()=>{ actions.noAnswer(data.orderId); close(); }}><${Icon} n="fast" s=${18}/>Testmodus: Keine Antwort nach 10 Minuten</button>`}
   </div><//>`;
   if (kind==='sos') return html`<${SosSheet} close=${close} s=${s} actions=${actions} data=${data} toast=${toast}/>`;
   if (kind==='chatmenu') { const t = s.threads.find(x=>x.id===data.threadId); if (!t) return null; const bl = s.blocked.includes(t.otherId);
@@ -1678,7 +1813,7 @@ function SheetHost({ sheet, close, s, act, go, toast, notify, actions }){
       <button className="listrow" onClick=${()=>{ act(st=>({ ...st, reports:[...st.reports, { id:uid(), listingId:t.listingId, reason:'Problem im Chat', note:'Gemeldet aus dem Chat mit ' + t.otherName, status:'open', by:st.user.name }] })); toast('Danke. Wir sehen uns das so schnell wie möglich an.', 'ok'); close(); }}><${Icon} n="flag" s=${20}/><span className="grow">Melden</span></button>
       <button className="listrow" style=${{ color:'var(--danger)' }} onClick=${()=>{ act(st=>({ ...st, blocked: bl ? st.blocked.filter(x=>x!==t.otherId) : [...st.blocked, t.otherId] })); toast(bl ? t.otherName + ' ist nicht mehr blockiert.' : t.otherName + ' ist blockiert. Ihr könnt euch nicht mehr schreiben.', 'ok'); close(); }}><${Icon} n="ban" s=${20}/><span className="grow">${bl ? 'Blockierung aufheben' : 'Blockieren'}</span></button>
     </div>
-    <button className="testbtn" onClick=${()=>{ actions.simHarass(t.id); close(); }}><${Icon} n="fast" s=${18}/>Testmodus: unangemessene Nachricht empfangen</button>
+    ${!LIVE && html`<button className="testbtn" onClick=${()=>{ actions.simHarass(t.id); close(); }}><${Icon} n="fast" s=${18}/>Testmodus: unangemessene Nachricht empfangen</button>`}
     </div><//>`; }
   if (kind==='blocked') return html`<${Sheet} title="Blockierte Personen" onClose=${close}><div className="stack g8">
     ${s.blocked.length===0 && html`<p className="muted">Du hast niemanden blockiert.</p>`}
@@ -1694,8 +1829,8 @@ function SheetHost({ sheet, close, s, act, go, toast, notify, actions }){
     ${data.idcheck && html`<button className="btn" onClick=${()=>actions.reopen('idcheck', { after:'chat', listingId:data.listingId })}>Identität jetzt prüfen</button>`}
     <button className="btn ghost" onClick=${close}>Andere Angebote ansehen</button></div><//>`;
   if (kind==='logout') return html`<${Sheet} title="Abmelden?" onClose=${close}><div className="stack g12">
-    <p className="muted">Deine Inserate, Chats und Aufträge bleiben gespeichert. Du meldest dich einfach wieder mit ${s.user.phone} an.</p>
-    <button className="btn" onClick=${()=>{ act(st=>({ ...st, account:st.user, user:null })); close(); go({ name:'home' }, true); }}>Abmelden</button>
+    <p className="muted">Deine Inserate, Chats und Aufträge bleiben gespeichert. Du meldest dich einfach wieder mit ${s.user.email || s.user.phone} an.</p>
+    <button className="btn" onClick=${()=>{ close(); if (LIVE) { actions.logout(); return; } act(st=>({ ...st, account:st.user, user:null })); go({ name:'home' }, true); }}>Abmelden</button>
     <button className="btn ghost" onClick=${close}>Abbrechen</button></div><//>`;
   if (kind==='dellisting') { const l = s.listings.find(x=>x.id===data.id); if (!l) return null;
     const open = s.orders.filter(o=>o.listingId===l.id && (o.status==='held' || o.status==='due' || o.status==='disputed')).length;
@@ -1704,11 +1839,11 @@ function SheetHost({ sheet, close, s, act, go, toast, notify, actions }){
         : html`<${React.Fragment}><p className="muted">„${l.title}“ wird endgültig gelöscht. Bewertungen dazu gehen verloren.</p><button className="btn danger" onClick=${()=>{ act(x=>({ ...x, listings: x.listings.filter(y=>y.id!==l.id) })); close(); toast('Inserat gelöscht.', 'ok'); }}>Endgültig löschen</button><//>`}
       <button className="btn ghost" onClick=${close}>Abbrechen</button></div><//>`; }
   if (kind==='reset') return html`<${Sheet} title="Testdaten zurücksetzen?" onClose=${close}><div className="stack g12"><p className="muted">Alle Chats, Aufträge und eigenen Inserate werden gelöscht. Dein Konto bleibt.</p>
-    <button className="btn" onClick=${()=>{ act(st=>withName(seed(), st.user)); close(); go({ name:'home' }, true); toast('Testversion zurückgesetzt.', 'ok'); }}>Zurücksetzen</button><button className="btn ghost" onClick=${close}>Abbrechen</button></div><//>`;
+    <button className="btn" onClick=${()=>{ act(st=>withName(fresh(), st.user)); close(); go({ name:'home' }, true); toast('Testversion zurückgesetzt.', 'ok'); }}>Zurücksetzen</button><button className="btn ghost" onClick=${close}>Abbrechen</button></div><//>`;
   if (kind==='delete') return html`<${Sheet} title="Konto wirklich löschen?" onClose=${close}><div className="stack g12">
     <p style=${{ color:'var(--ink-2)' }}>Dein Profil, deine Inserate, Chats und Ausweisdaten werden gelöscht. Offene Aufträge müssen vorher abgeschlossen sein. Bewertungen, die du geschrieben hast, bleiben anonym erhalten.</p>
     ${s.orders.some(o=>o.status==='held'||o.status==='due'||o.status==='disputed') ? html`<div className="box b-danger"><${Icon} n="alert"/><span>Du hast noch offene Aufträge. Schließe sie zuerst ab oder storniere sie.</span></div>`
-      : html`<button className="btn danger" onClick=${()=>{ act(()=>seed()); close(); }}>Konto endgültig löschen</button>`}
+      : html`<button className="btn danger" onClick=${()=>{ close(); if (LIVE) { actions.deleteAccount(); return; } act(()=>seed()); }}>Konto endgültig löschen</button>`}
     <button className="btn ghost" onClick=${close}>Abbrechen</button></div><//>`;
   return null;
 }
@@ -1781,11 +1916,11 @@ function FilterSheet({ close, s, act, data, actions }){
     <${Group} title="Bewertung">
       <div className="row g8 wrap"><${Opt} k="minRating" v=${0} label="Egal"/><${Opt} k="minRating" v=${4} label="ab ★ 4"/><${Opt} k="minRating" v=${4.5} label="ab ★ 4,5"/></div>
     <//>
-    <${Group} title="Umkreis">
+    ${!LIVE && html`<${Group} title="Umkreis">
       <div className="row g8 wrap">${[2,5,10,25,50].map(r=> html`<button key=${r} className="chip" aria-pressed=${radius===r} onClick=${()=>setRadius(r)}><${Icon} n="pin" s=${15}/>${r} km</button>`)}</div>
-    <//>
+    <//>`}
     <${Group} title="Sortieren nach">
-      <div className="row g8 wrap"><${Opt} k="sort" v="nah" label="Entfernung"/><${Opt} k="sort" v="preis" label="Preis"/><${Opt} k="sort" v="bewertung" label="Bewertung"/></div>
+      <div className="row g8 wrap"><${Opt} k="sort" v="nah" label=${LIVE ? 'Neueste' : 'Entfernung'}/><${Opt} k="sort" v="preis" label="Preis"/><${Opt} k="sort" v="bewertung" label="Bewertung"/></div>
     <//>
     <div className="row g8" style=${{ position:'sticky', bottom:-22, background:'var(--bg)', paddingBlock:'10px 4px' }}>
       <button className="btn outline" style=${{ width:'auto', flex:'none' }} onClick=${()=>{ setF({ ...DEF_F }); setRadius(10); setOnlyIdv(false); }}>Zurücksetzen</button>
@@ -1838,6 +1973,55 @@ function IdCheckSheet({ close, act, toast, after, actions, data }){
       ${err && html`<p className="err" role="alert">${err}</p>`}
       <button className="btn" onClick=${finish}>Abschließen</button>
     </div>`}
+  </div><//>`;
+}
+
+function LiveIdCheckSheet({ close, s, actions, toast }){
+  const u = s.user; const [gender, setGender] = useState(''); const [consent, setConsent] = useState(false); const [err, setErr] = useState('');
+  if (u.idVerified) return html`<${Sheet} title="Identität geprüft" onClose=${close}><div className="stack g12">
+    <div className="box b-mint"><${Icon} n="shield"/><span>Deine Identität ist bestätigt. Andere sehen das grüne Schild bei deinem Namen.</span></div>
+    <button className="btn" onClick=${close}>Okay</button></div><//>`;
+  if (u.idReq) return html`<${Sheet} title="Prüfung angefragt" onClose=${close}><div className="stack g12">
+    <div className="box b-lav"><${Icon} n="clock"/><span>Deine Anfrage ist beim Neighbr-Team. Wir melden uns bei dir für einen kurzen Videoanruf oder ein Treffen. Halte deinen Personalausweis oder Reisepass bereit.</span></div>
+    <p className="small muted">Sobald das Team bestätigt hat, bekommst du eine Nachricht und das grüne Schild.</p>
+    <button className="btn" onClick=${close}>Okay</button>
+    <button className="btn ghost" onClick=${()=>{ actions.cancelIdv(); toast('Anfrage zurückgezogen.', 'ok'); close(); }}>Anfrage zurückziehen</button></div><//>`;
+  function send(){
+    if (!gender) { setErr('Bitte wähle aus, was in deinem Ausweis beim Geschlecht steht.'); return; }
+    if (!consent) { setErr('Ohne deine Einwilligung können wir dich nicht prüfen.'); return; }
+    if (!s.net || !s.net.live) { setErr('Gerade besteht keine Verbindung. Versuch es gleich noch einmal.'); return; }
+    actions.requestIdv(gender); toast('Anfrage gesendet. Das Neighbr-Team meldet sich bei dir.', 'ok', 5000); close();
+  }
+  return html`<${Sheet} title="Identität prüfen" onClose=${close}><div className="stack g16">
+    <p style=${{ color:'var(--ink-2)' }}>So läuft es in der Testphase: Jemand aus dem Neighbr-Team sieht sich deinen Ausweis einmal kurz an, persönlich oder im Videoanruf. Es wird nichts hochgeladen, fotografiert oder kopiert. Gespeichert wird nur, dass du geprüft bist.</p>
+    <div className="panel stack g8" style=${{ padding:14 }}>
+      <div className="idstep"><${Icon} n="check" s=${18}/>Grünes Schild „Identität geprüft“ bei deinem Namen</div>
+      <div className="idstep"><${Icon} n="check" s=${18}/>Bis zu 20 neue Anfragen am Tag statt 5</div>
+      <div className="idstep"><${Icon} n="check" s=${18}/>Zugang zu Angeboten nur für geprüfte Personen</div>
+      <div className="idstep"><${Icon} n="check" s=${18}/>Für Frauen: die Optionen „Frauen für Frauen“</div>
+    </div>
+    <div className="stack g8"><span className="label">Was steht in deinem Ausweis beim Geschlecht?</span>
+      <div className="row g8 wrap">${[['w','weiblich'],['m','männlich'],['d','divers']].map(([v,t])=> html`<button key=${v} className="chip" aria-pressed=${gender===v} onClick=${()=>{ setGender(v); setErr(''); }}>${t}</button>`)}</div>
+      <span className="tiny muted">Das Team gleicht das beim Termin mit deinem Ausweis ab.</span></div>
+    <label className="check"><input type="checkbox" id="consent" checked=${consent} onChange=${e=>{ setConsent(e.target.checked); setErr(''); }}/><span>Ich bin einverstanden, dass das Neighbr-Team meinen Ausweis einmal ansieht und speichert, dass ich geprüft bin und welches Geschlecht im Ausweis steht. Dafür darf das Team mich über meine E-Mail-Adresse oder Handynummer kontaktieren. Ich kann die Einwilligung jederzeit widerrufen.</span></label>
+    ${err && html`<p className="err" role="alert">${err}</p>`}
+    <button className="btn" onClick=${send}>Prüfung anfragen</button>
+  </div><//>`;
+}
+
+function NewPwSheet({ close, toast }){
+  const [pw, setPw] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  async function save(){
+    if (pw.length < 8) { setErr('Dein Passwort braucht mindestens 8 Zeichen.'); return; }
+    setBusy(true); let error = null; try { ({ error } = await sb.auth.updateUser({ password:pw })); } catch(e){ error = e; } setBusy(false);
+    if (error) { setErr(authError(error)); return; }
+    toast('Dein neues Passwort ist gespeichert.', 'ok'); close();
+  }
+  return html`<${Sheet} title="Neues Passwort" onClose=${close}><div className="stack g16">
+    <p className="muted">Leg ein neues Passwort für dein Konto fest.</p>
+    <div className="field"><label htmlFor="npw">Neues Passwort</label><input id="npw" className="input" type="password" autoComplete="new-password" placeholder="mindestens 8 Zeichen" value=${pw} onChange=${e=>{ setPw(e.target.value); setErr(''); }}/></div>
+    ${err && html`<p className="err" role="alert">${err}</p>`}
+    <button className="btn" disabled=${busy} onClick=${save}>${busy ? 'Einen Moment …' : 'Speichern'}</button>
   </div><//>`;
 }
 
@@ -2001,7 +2185,7 @@ function SosSheet({ close, s, actions, data, toast }){
 }
 
 /* ---------- Gemeinsame Testwelt (db) ---------- */
-const SH_EMPTY = { profiles:{}, listings:{}, threads:{}, orders:{}, reports:{}, alerts:{}, feedback:{} };
+const SH_EMPTY = { profiles:{}, listings:{}, threads:{}, orders:{}, reports:{}, alerts:{}, feedback:{}, idreqs:{} };
 const isObj = v => v && typeof v==='object' && !Array.isArray(v);
 function deepMerge(a, b){ const out = { ...(a||{}) }; for (const k in b){ const v = b[k]; out[k] = isObj(v) && isObj(out[k]) ? deepMerge(out[k], v) : v; } return out; }
 const eq = (a,b) => JSON.stringify(a===undefined?null:a) === JSON.stringify(b===undefined?null:b);
@@ -2036,7 +2220,7 @@ function mergeState(s, raw, net){
   const sL = vals(raw.listings).filter(d=>d && d.title).map(d => { const mine = d.ownerId===me; const p = P(d.ownerId); const nm = mine ? s.user.name : (p.name || 'Jemand');
     const views = vals(d.views); const booked = truthyKeys(d.bookedMap);
     return { id:d.id, _sh:true, ownerId:d.ownerId, cat:d.cat, title:d.title, price:d.price, desc:d.desc, district:d.district, photo:d.photo||null, status:d.status, flag:d.flag||null, rejectReason:d.rejectReason||null,
-      schedule:d.schedule||null, type:d.type||'service', deposit:d.deposit||0, rent:d.rent||null, pickupAddress:d.pickupAddress||'', business:!!d.business, created:d.created, mine, dist: mine ? 0.1 : hashDist(d.id), booked,
+      schedule:d.schedule||null, type:d.type||'service', deposit:d.deposit||0, rent:d.rent||null, pickupAddress:d.pickupAddress||'', business:!!d.business, created:d.created, mine, dist: LIVE ? 0 : mine ? 0.1 : hashDist(d.id), booked,
       reviews: vals(d.reviewMap).sort((a,b)=>(b.at||0)-(a.at||0)),
       provider:{ id: mine ? 'me' : uref(d.ownerId), name:nm, initial:nm[0], phone:true, idv: mine ? !!s.user.idVerified : !!p.idv, gender: mine ? (s.user.gender||null) : (p.gender||null), jobs:0, womenOnly:!!d.womenOnly, requireIdv:!!d.requireIdv },
       stats:{ views:views.length, favs:vals(d.favs).filter(Boolean).length, requests:0, bookings:booked.length, week:days7.map(k=>views.filter(v=>v===k).length) } }; })
@@ -2050,8 +2234,9 @@ function mergeState(s, raw, net){
       otherRating: fmtAvg(reviewsOf(other)), messages, unread, offerSent:true, updated:d.updated||0, day:d.day }; });
   const tag = a => vals(a).map(x=>({ ...x, _sh:true })).sort((a,b)=>(b.at||0)-(a.at||0));
   const cr = reviewsOf(me);
-  return { ...s, net, profiles:raw.profiles,
-    user:{ ...s.user, reviewsReceived:[...cr, ...(s.user.reviewsReceived||[])] },
+  const meP = P(me); const liveUser = net.live ? { idVerified:!!meP.idv, gender:meP.gender || null, idReq:meP.idReq || null } : {};
+  return { ...s, net, profiles:raw.profiles, idreqs:raw.idreqs,
+    user:{ ...s.user, ...liveUser, reviewsReceived:[...cr, ...(s.user.reviewsReceived||[])] },
     listings:[...sL, ...s.listings], threads:[...sT, ...s.threads], orders:[...myO, ...s.orders], allOrders:[...allO, ...s.orders],
     reports:[...tag(raw.reports), ...s.reports], alerts:[...tag(raw.alerts), ...s.alerts], feedback:tag(raw.feedback) };
 }
@@ -2134,9 +2319,61 @@ function syncShared(prev, next, push){
 function stripLocal(next){
   const keep = a => (a||[]).filter(x=>!x._sh);
   const out = { ...next, listings:keep(next.listings), threads:keep(next.threads), orders:keep(next.orders), reports:keep(next.reports), alerts:keep(next.alerts) };
-  delete out.net; delete out.allOrders; delete out.feedback; delete out.profiles;
+  delete out.net; delete out.allOrders; delete out.feedback; delete out.profiles; delete out.idreqs;
   if (out.user && out.user.reviewsReceived) out.user = { ...out.user, reviewsReceived: out.user.reviewsReceived.filter(r=>!String(r.id).startsWith('cr-')) };
   return out;
+}
+
+/* ---------- Verbindung zur Datenbank (Supabase) ----------
+   Spricht dieselbe kleine Schnittstelle wie die gemeinsame Testwelt:
+   doc(pfad).set/update/delete und collection(name).onSnapshot.
+   Gelesen wird direkt aus der Tabelle (die Regeln dort entscheiden, was man sieht),
+   geschrieben nur über die Funktion doc_write, die alle Rechte prüft. */
+function liveDb(client){
+  const cache = {}; const subs = []; const timers = {}; let closed = false;
+  const errOf = e => { const c = e && e.code; const m = String((e && e.message) || '');
+    if (c==='42501') return { code:'not_granted', message:m };
+    if (c==='P0002') return { code:'invalid_argument', message:m };
+    if (c==='22023' && /too_large/.test(m)) return { code:'quota_exceeded', message:m };
+    if (!c || /fetch|network|load failed/i.test(m)) return { code:'unavailable', message:m };
+    return { code:c, message:m }; };
+  const cols = () => [...new Set(subs.map(x=>x.col))];
+  const emit = col => { const m = cache[col]; if (!m) return; const docs = Object.keys(m).map(id => ({ id, exists:true, data:() => m[id] }));
+    subs.filter(x=>x.col===col).forEach(x=>x.next({ docs, size:docs.length, empty:!docs.length })); };
+  async function load(col){
+    try { const out = {}; let from = 0;
+      for (;;) { const { data, error } = await client.from('docs').select('id,data').eq('col', col).order('id').range(from, from + 999);
+        if (error) throw error; data.forEach(r => { out[r.id] = r.data; }); if (data.length < 1000) break; from += 1000; }
+      if (closed) return; cache[col] = out; emit(col);
+    } catch(e){ if (!closed) subs.filter(x=>x.col===col).forEach(x=>x.err && x.err(errOf(e))); }
+  }
+  const schedule = (col, ms=150) => { clearTimeout(timers[col]); timers[col] = setTimeout(() => load(col), ms); };
+  const reloadAll = () => { if (!closed && document.visibilityState!=='hidden') cols().forEach(c => schedule(c, 60)); };
+  function onChange(p){
+    const n = p.new || {}, o = p.old || {}; const col = n.col || o.col;
+    if (!col) { reloadAll(); return; }
+    if (!cache[col]) { if (cols().includes(col)) schedule(col); return; }
+    if (p.eventType==='DELETE') { if (o.id) { if (cache[col][o.id]) { cache[col] = { ...cache[col] }; delete cache[col][o.id]; emit(col); } } else schedule(col); return; }
+    if (n.id && n.data && typeof n.data==='object') { cache[col] = { ...cache[col], [n.id]: n.data }; emit(col); } else schedule(col);
+  }
+  const chan = client.channel('neighbr-docs-' + uid()).on('postgres_changes', { event:'*', schema:'public', table:'docs' }, onChange)
+    .subscribe(status => { if (status==='SUBSCRIBED') reloadAll(); });
+  const onVis = () => { if (document.visibilityState==='visible') reloadAll(); };
+  document.addEventListener('visibilitychange', onVis); window.addEventListener('online', reloadAll);
+  const poll = setInterval(reloadAll, 60000);
+  async function write(path, kind, data){
+    const i = path.indexOf('/'); const col = path.slice(0, i), id = path.slice(i + 1);
+    let res; try { res = await client.rpc('doc_write', { p_col:col, p_id:id, p_kind:kind, p_data: data===undefined ? null : data }); } catch(e){ throw errOf(e); }
+    if (res.error) throw errOf(res.error);
+  }
+  const query = col => ({ where(){ return query(col); },
+    onSnapshot(next, err){ const x = { col, next, err }; subs.push(x); if (cache[col]) setTimeout(() => emit(col), 0); schedule(col, 0);
+      return () => { const k = subs.indexOf(x); if (k >= 0) subs.splice(k, 1); }; } });
+  return {
+    doc: path => ({ set: d => write(path, 'set', d), update: d => write(path, 'update', d), delete: () => write(path, 'delete', null) }),
+    collection: col => query(col),
+    close(){ closed = true; clearInterval(poll); Object.values(timers).forEach(clearTimeout); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('online', reloadAll); try { client.removeChannel(chan); } catch(e){} }
+  };
 }
 
 /* ---------- App ---------- */
@@ -2177,15 +2414,30 @@ function App(){
       const key = op.col + '/' + op.id;
       const run = () => { const ref = db.doc(key); return op.kind==='set' ? ref.set(op.data) : op.kind==='update' ? ref.update(op.data) : ref.delete(); };
       const onErr = e => { const code = e && e.code;
-        if (code==='unavailable') return new Promise(res=>setTimeout(res, 400 + Math.random()*800)).then(run).catch(()=>{});
+        if (code==='unavailable') return new Promise(res=>setTimeout(res, 800 + Math.random()*1200)).then(run).catch(()=>new Promise(res=>setTimeout(res, 4000)).then(run)).catch(()=>{ toastRef.current && toastRef.current('Keine Verbindung: Eine Änderung konnte nicht gespeichert werden.', 'info', 6000); });
         if (code==='quota_exceeded') { toastRef.current && toastRef.current('Die gemeinsame Testwelt ist voll. Sag der Person Bescheid, die dir den Link geschickt hat.', 'info', 7000); return; }
+        if (LIVE && ['not_granted','invalid_argument'].includes(code)) { toastRef.current && toastRef.current('Das konnte nicht gespeichert werden. Lade die App neu und versuch es noch einmal.', 'info', 6000); console.warn('Neighbr: abgelehnt', op.col, e && e.message); return; }
         if (op.kind==='set' && ['invalid_argument','not_granted','revoked'].includes(code)) { goLocal(); return; }
         console.warn('Neighbr: Speichern fehlgeschlagen', op.col, code); };
       const p = (chains.current[key] || Promise.resolve()).then(run).catch(onErr);
       chains.current[key] = p;
     });
   };
-  useEffect(() => { let alive = true; const unsubs = [];
+  function attach(db, id, owner, unsubs){
+    const sub = (key, q) => unsubs.push(q.onSnapshot(snap => {
+      const m = {}; snap.docs.forEach(d => { const v = d.data(); if (v) m[d.id] = v; });
+      const prevCol = rawRef.current[key] || {}; const first = !readyRef.current[key];
+      rawRef.current = { ...rawRef.current, [key]: m }; readyRef.current[key] = true; setRaw(rawRef.current);
+      onSharedRef.current && onSharedRef.current(key, prevCol, m, first);
+    }, err => console.warn('Neighbr: Abo beendet', key, err && err.code)));
+    sub('profiles', db.collection('profiles'));
+    sub('listings', db.collection('listings'));
+    sub('threads', db.collection('threads').where('participants', 'array-contains', id));
+    sub('orders', owner ? db.collection('orders') : db.collection('orders').where('participants', 'array-contains', id));
+    sub('reports', db.collection('reports'));
+    if (owner) { sub('alerts', db.collection('alerts')); sub('feedback', db.collection('feedback')); if (LIVE) sub('idreqs', db.collection('idreqs')); }
+  }
+  useEffect(() => { if (LIVE) return; let alive = true; const unsubs = [];
     (async () => {
       const cl = window.claude;
       if (!cl || !cl.use) { setNetState({ status:'local' }); return; }
@@ -2194,22 +2446,48 @@ function App(){
       const id = user ? await user.id() : null; const owner = user ? await user.isOwner() : false; const can = user ? await user.can('data.write') : null;
       if (!db || !id || can===false) { setNetState({ status: db && id ? 'readonly' : 'local', owner }); return; }
       dbRef.current = db;
-      const sub = (key, q) => unsubs.push(q.onSnapshot(snap => {
-        const m = {}; snap.docs.forEach(d => { const v = d.data(); if (v) m[d.id] = v; });
-        const prevCol = rawRef.current[key] || {}; const first = !readyRef.current[key];
-        rawRef.current = { ...rawRef.current, [key]: m }; readyRef.current[key] = true; setRaw(rawRef.current);
-        onSharedRef.current && onSharedRef.current(key, prevCol, m, first);
-      }, err => console.warn('Neighbr: Abo beendet', key, err && err.code)));
-      sub('profiles', db.collection('profiles'));
-      sub('listings', db.collection('listings'));
-      sub('threads', db.collection('threads').where('participants', 'array-contains', id));
-      sub('orders', owner ? db.collection('orders') : db.collection('orders').where('participants', 'array-contains', id));
-      sub('reports', db.collection('reports'));
-      if (owner) { sub('alerts', db.collection('alerts')); sub('feedback', db.collection('feedback')); }
+      attach(db, id, owner, unsubs);
       setNetState({ shared:true, uid:id, owner, status:'shared' });
     })().catch(() => setNetState({ status:'local' }));
     return () => { alive = false; unsubs.forEach(u => u()); };
   }, []);
+  /* Live: Anmeldung beobachten */
+  const [auth, setAuth] = useState({ ready: !LIVE || !sb, uid:null, user:null });
+  useEffect(() => { if (!LIVE || !sb) return;
+    let on = true;
+    sb.auth.getSession().then(({ data }) => { if (!on) return; const se = data && data.session; setAuth({ ready:true, uid: se ? se.user.id : null, user: se ? se.user : null }); },
+      () => on && setAuth({ ready:true, uid:null, user:null }));
+    const { data:{ subscription } } = sb.auth.onAuthStateChange((ev, se) => {
+      const id = se ? se.user.id : null;
+      setAuth(a => a.ready && a.uid===id ? a : { ready:true, uid:id, user: se ? se.user : null });
+      if (ev==='PASSWORD_RECOVERY') setTimeout(() => setSheet({ kind:'newpw', data:{} }), 400);
+    });
+    return () => { on = false; subscription.unsubscribe(); };
+  }, []);
+  /* Live: lokales Profil zur Anmeldung passend machen */
+  useEffect(() => { if (!LIVE || !auth.ready) return;
+    const st = sRef.current;
+    if (!auth.uid) { if (st.user) { netRef.current = { ...netRef.current, shared:false }; act(() => fresh()); setNav([{ name:'home' }]); } return; }
+    if (st.user && st.user.uid===auth.uid) return;
+    const m = (auth.user && auth.user.user_metadata) || {}; const mail = (auth.user && auth.user.email) || '';
+    const u = { uid:auth.uid, email:mail, name:String(m.name || mail.split('@')[0] || 'Neighbr').slice(0, 30), phone:m.phone || '', verified:true, idVerified:false, gender:null, joined:Date.now(),
+      trusted:null, address:'', reviewsReceived:[], settings:{ onlyIdvRequests:false, onlyWomenRequests:false, onlyWomenProviders:false } };
+    netRef.current = { ...netRef.current, shared:false };
+    act(() => withName(fresh(), u)); setNav([{ name:'home' }]);
+    toast(st.user ? 'Angemeldet als ' + u.name + '.' : 'Hallo ' + u.name + '! Schön, dass du da bist.', 'ok');
+  }, [auth]);
+  /* Live: Datenbank verbinden, solange jemand angemeldet ist */
+  useEffect(() => { if (!LIVE || !sb || !auth.uid) return;
+    let alive = true; const unsubs = []; const db = liveDb(sb);
+    (async () => {
+      let owner = false; try { const r = await sb.rpc('is_admin'); owner = !!(r && r.data); } catch(e){}
+      if (!alive) return;
+      dbRef.current = db; attach(db, auth.uid, owner, unsubs);
+      setNetState({ shared:true, uid:auth.uid, owner, status:'live', live:true });
+    })();
+    return () => { alive = false; unsubs.forEach(u => u()); db.close(); if (dbRef.current===db) dbRef.current = null;
+      rawRef.current = SH_EMPTY; readyRef.current = {}; setRaw(SH_EMPTY); setNetState({ shared:false, uid:null, owner:false, status:'connecting', live:false }); };
+  }, [auth.uid]);
   useEffect(() => {
     if (!net.shared || !s.user || !readyRef.current.profiles) return;
     const cur = raw.profiles[net.uid]; const want = { name:s.user.name, idv:!!s.user.idVerified, gender:s.user.gender||null };
@@ -2252,6 +2530,9 @@ function App(){
         if (old[msg.id] || msg.from===me || (msg.to && msg.to!==me) || isOpen(d.id)) return;
         const other = d.buyerId===me ? d.providerId : d.buyerId; const nm = (rawRef.current.profiles[other] || {}).name || 'Jemand';
         notify(msg.from==='sys' ? msg.text : nm + ': ' + (msg.type==='offer' ? 'Neues Angebot über ' + money(msg.offer.amount) : msg.img ? 'Foto' : msg.text)); }); });
+    if (key==='profiles') { const pd = prevCol[me], d = m[me];
+      if (pd && d && !pd.idv && d.idv) notify('Deine Identität ist bestätigt. Du hast jetzt das grüne Schild.');
+      else if (pd && d && pd.idReq && !d.idReq && !d.idv && !(sRef.current.user && sRef.current.user._cancelIdv)) notify('Deine Identitätsprüfung wurde nicht abgeschlossen. Du kannst sie jederzeit neu anfragen.'); }
     if (key==='listings') vals(m).forEach(d => { const pd = prevCol[d.id]; if (d.ownerId!==me || !pd || pd.status===d.status) return;
       if (d.status==='live' && pd.status==='review') notify('Dein Inserat „' + d.title + '“ ist jetzt online.');
       if (d.status==='rejected') notify('Dein Inserat „' + d.title + '“ wurde abgelehnt.'); });
@@ -2438,8 +2719,30 @@ function App(){
       themSay(t.id, extra.handover==='lieferung' ? 'Danke! Ich bringe es dir am ' + dkLabel(from) + ' vorbei und melde mich vorher kurz.' : 'Danke! Komm am ' + dkLabel(from) + ' einfach vorbei, ich zeig dir kurz, wie alles funktioniert.', 2200);
       go({ name:'order', id:o.id });
     },
+    requestIdv(gender){
+      const n = netRef.current; const st = sRef.current; if (!n.shared) return; const at = Date.now();
+      qRef.current.push({ kind:'update', col:'profiles', id:n.uid, data:{ idReq:{ gender, at } } });
+      qRef.current.push({ kind:'set', col:'idreqs', id:n.uid.slice(0, 36) + '-' + at, data:{ name:st.user.name, email:st.user.email || '', phone:st.user.phone || '', gender, at } });
+      flushRef.current();
+    },
+    cancelIdv(){ const n = netRef.current; if (!n.shared) return; act(st=>({ ...st, user:{ ...st.user, _cancelIdv:true } })); qRef.current.push({ kind:'update', col:'profiles', id:n.uid, data:{ idReq:null } }); flushRef.current(); },
+    async logout(){ try { await sb.auth.signOut(); } catch(e){ try { await sb.auth.signOut({ scope:'local' }); } catch(e2){} } },
+    async deleteAccount(){
+      let r = null; try { r = await sb.rpc('delete_me'); } catch(e){ r = { error:e }; }
+      if (r && r.error) { toast('Das Löschen hat nicht geklappt. Prüf deine Verbindung und versuch es noch einmal.', 'info', 6000); return; }
+      try { await sb.auth.signOut({ scope:'local' }); } catch(e){}
+      try { localStorage.removeItem(KEY); } catch(e){}
+      toast('Dein Konto ist gelöscht.', 'ok');
+    },
     retryChat(listingId){ const l = sRef.current.listings.find(x=>x.id===listingId); if (l) setTimeout(()=>startChat(l), 50); },
     reopen(kind, data){ setSheet({ kind, data }); }
+  };
+  const live = {
+    adminIdv(id, ok){ const p = rawRef.current.profiles[id]; if (!p) return;
+      qRef.current.push({ kind:'update', col:'profiles', id, data: ok ? { idv:true, gender:(p.idReq && p.idReq.gender) || p.gender || null, idReq:null } : { idReq:null } }); flushRef.current(); },
+    async claimAdmin(){ let r = null; try { r = await sb.rpc('claim_admin'); } catch(e){}
+      if (r && r.data===true) { toast('Du bist jetzt Betreiber:in. Die App lädt neu.', 'ok'); setTimeout(() => location.reload(), 1200); }
+      else toast('Das ging leider nicht. Vermutlich ist schon jemand anderes Betreiber:in.', 'info', 6000); }
   };
   function onSaved(l, flag){
     back();
@@ -2447,7 +2750,7 @@ function App(){
   }
   function onCreated(l, verdict){
     setNav([{ name:'profile' }, { name:'mylistings' }]);
-    if (verdict==='review') { toast('Die automatische Prüfung hat etwas gefunden: ' + (l.flag || 'unklarer Inhalt') + '. Unser Team prüft dein Inserat. Als Betreiber findest du es unter Profil › Moderation.', 'info', 8000); return; }
+    if (verdict==='review') { toast('Die automatische Prüfung hat etwas gefunden: ' + (l.flag || 'unklarer Inhalt') + '. Unser Team prüft dein Inserat.' + (LIVE ? '' : ' Als Betreiber findest du es unter Profil › Moderation.'), 'info', 8000); return; }
     toast('Wird geprüft …', 'info', 2500);
     later(3500, ()=>{
       act(st=>({ ...st, listings: st.listings.map(x=>x.id===l.id && x.status==='review' ? { ...x, status:'live' } : x) }));
@@ -2469,11 +2772,16 @@ function App(){
   }
 
   const Toasts = () => html`<div className="toasts" aria-live="polite">${toasts.map(t=> html`<div key=${t.id} className="toast"><${Icon} n=${t.kind==='push'?'bell':t.kind==='info'?'alert':'check'} s=${18}/><span>${t.text}</span></div>`)}</div>`;
+  if (LIVE && !sb) return html`<div className="app"><div className="screen pad stack g16" style=${{ paddingBlock:48, justifyContent:'center', textAlign:'center' }}>
+    <div className="tile t-lav" style=${{ width:64, height:64, borderRadius:20, alignSelf:'center' }}><${Icon} n="alert" s=${30}/></div>
+    <h1 className="title-l">Keine Verbindung</h1><p className="muted">Neighbr braucht beim ersten Start Internet. Prüf deine Verbindung und lade neu.</p>
+    <button className="btn" onClick=${()=>location.reload()}>Neu laden</button></div></div>`;
+  if (LIVE && (!auth.ready || (auth.uid && (!s.user || s.user.uid!==auth.uid)))) return html`<div className="app"><div className="screen pad stack" style=${{ justifyContent:'center', alignItems:'center' }}><span className="logo">neighbr</span><span className="small muted">Einen Moment …</span></div><${Toasts}/></div>`;
   if (!s.user) return html`<div className="app"><${Onboarding} toast=${toast} account=${s.account}
     onLogin=${()=>{ const n = s.account.name; act(st=>({ ...st, user:st.account, account:null })); setNav([{ name:'home' }]); toast('Schön, dass du wieder da bist, ' + n + '!', 'ok'); }}
-    onDone=${u=>{ act(()=>withName(seed(), u)); setNav([{ name:'home' }]); toast('Willkommen bei Neighbr, ' + u.name + '!', 'ok'); }}/><${Toasts}/></div>`;
+    onDone=${u=>{ act(()=>withName(fresh(), u)); setNav([{ name:'home' }]); toast('Willkommen bei Neighbr, ' + u.name + '!', 'ok'); }}/><${Toasts}/></div>`;
 
-  const props = { s, act, go, back, toast, notify, openSheet, startChat, bookSlot, bookRent, sendMessage, sendPhoto, typingId, simReviewOfMe, simBooking: actions.simBooking, markView, feedbackDone, screenName: SCREEN_NAMES[route.name] || 'App' };
+  const props = { s, act, go, back, toast, notify, openSheet, startChat, bookSlot, bookRent, sendMessage, sendPhoto, typingId, simReviewOfMe, simBooking: actions.simBooking, markView, feedbackDone, live, screenName: SCREEN_NAMES[route.name] || 'App' };
   const top = ['home','favs','create','chats','profile'].includes(route.name);
   const screens = { home:Home, favs:Favorites, create:CreateScreen, edit:CreateScreen, chats:Chats, profile:Profile, listing:ListingScreen, chat:ChatScreen, order:OrderScreen, mylistings:MyListings, orders:Orders, admin:Admin, safety:SafetyScreen };
   const Screen = screens[route.name] || Home;
